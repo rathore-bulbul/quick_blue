@@ -1,3 +1,7 @@
+## 0.3.2+3
+
+- Windows: catch `winrt::hresult_error` in every `fire_and_forget` coroutine. An exception escaping one (e.g. `FromBluetoothAddressAsync` returning E_FAIL during a scan) called `winrt::terminate` and fail-fasted the host process (0xC000027B). Scan results now fall back to the advertisement `LocalName`; a failed connect reports `disconnected` instead of hanging.
+
 ## [0.3.2+2] - 2022.5.18
 
 - Revert to 0.3.2
