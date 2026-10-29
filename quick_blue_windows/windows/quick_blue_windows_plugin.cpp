@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <iomanip>
 #include <string>
+#include <atomic>
+#include <chrono>
 
 #define GUID_FORMAT "%08x-%04hx-%04hx-%02hhx%02hhx-%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx"
 #define GUID_ARG(guid) guid.Data1, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1], guid.Data4[2], guid.Data4[3], guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]
@@ -342,15 +344,30 @@ std::vector<uint8_t> parseManufacturerDataHead(BluetoothLEAdvertisement advertis
   return result;
 }
 
+// DIAGNOSTIC: number of SendScanResultAsync coroutines still waiting to deliver.
+static std::atomic<int> g_pendingScanResults{0};
+
+// DIAGNOSTIC: ms between the radio receiving the advertisement and now.
+static long long AdvAgeMs(BluetoothLEAdvertisementReceivedEventArgs const& args) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      winrt::clock::now() - args.Timestamp()).count();
+}
+
 void QuickBlueWindowsPlugin::BluetoothLEWatcher_Received(
     BluetoothLEAdvertisementWatcher sender,
     BluetoothLEAdvertisementReceivedEventArgs args) {
+  int pending = ++g_pendingScanResults;
+  OutputDebugString((L"[quick_blue][diag] RECEIVED addr=" + winrt::to_hstring(args.BluetoothAddress())
+    + L" ageMs=" + winrt::to_hstring(AdvAgeMs(args))
+    + L" pending=" + winrt::to_hstring(pending) + L"\n").c_str());
   SendScanResultAsync(args);
 }
 
 winrt::fire_and_forget QuickBlueWindowsPlugin::SendScanResultAsync(BluetoothLEAdvertisementReceivedEventArgs args) {
+  struct PendingGuard { ~PendingGuard() { --g_pendingScanResults; } } pendingGuard;
   try {
     BluetoothLEDevice device = nullptr;
+    auto lookupStart = std::chrono::steady_clock::now();
     try {
       // Windows can fail this lookup (E_FAIL / "Element not found") for
       // advertise-only or vanished devices. That must not kill the process;
@@ -360,7 +377,14 @@ winrt::fire_and_forget QuickBlueWindowsPlugin::SendScanResultAsync(BluetoothLEAd
       LogWinrtError(L"FromBluetoothAddressAsync", e);
       device = nullptr;
     }
+    auto lookupMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - lookupStart).count();
     auto name = device ? device.Name() : args.Advertisement().LocalName();
+    OutputDebugString((L"[quick_blue][diag] LOOKUP_DONE addr=" + winrt::to_hstring(args.BluetoothAddress())
+      + L" lookupMs=" + winrt::to_hstring(lookupMs)
+      + L" ageMs=" + winrt::to_hstring(AdvAgeMs(args))
+      + L" pending=" + winrt::to_hstring(g_pendingScanResults.load())
+      + L" sink=" + (scan_result_sink_ ? L"yes" : L"no") + L"\n").c_str());
     OutputDebugString((L"Received BluetoothAddress:" + winrt::to_hstring(args.BluetoothAddress())
       + L", Name:" + name + L", LocalName:" + args.Advertisement().LocalName() + L"\n").c_str());
     if (scan_result_sink_) {
