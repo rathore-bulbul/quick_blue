@@ -345,6 +345,10 @@ std::vector<uint8_t> parseManufacturerDataHead(BluetoothLEAdvertisement advertis
 void QuickBlueWindowsPlugin::BluetoothLEWatcher_Received(
     BluetoothLEAdvertisementWatcher sender,
     BluetoothLEAdvertisementReceivedEventArgs args) {
+  // Windows generates a synthetic "out of range" advertisement (last seen data,
+  // RSSI = -127) when a device has been silent for the watcher's out-of-range
+  // timeout (60s by default). It is not a new advertisement, so do not forward it.
+  if (args.RawSignalStrengthInDBm() == -127) return;
   SendScanResultAsync(args);
 }
 
